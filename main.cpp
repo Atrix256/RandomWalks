@@ -6,7 +6,7 @@ static const size_t c_randomWalkVisSteps[] =
     10,
     100,
     1000,
-    10000
+    //10000
 };
 static const size_t c_randomWalkVisImageSize = 256;
 
@@ -252,7 +252,7 @@ static void BlueNoise_BestCandidate(std::vector<float>& values, size_t numValues
             // whichever is closer left vs right is the closer point distance
             float minDist = std::min(distanceLeft, distanceRight);
 
-            // keep the best candidate seen
+            // keep the best candidate seen (maximize the closest distance)
             if (minDist > bestDistance)
             {
                 bestDistance = minDist;
@@ -266,6 +266,78 @@ static void BlueNoise_BestCandidate(std::vector<float>& values, size_t numValues
         values.push_back(bestCandidateValue);
     }
 }
+
+template <bool VARIATION>
+static void RedNoise_BestCandidate(std::vector<float>& values, size_t numValues, std::mt19937& rng)
+{
+    // if they want less samples than there are, just truncate the sequence
+    if (numValues <= values.size())
+    {
+        values.resize(numValues);
+        return;
+    }
+
+    static std::uniform_real_distribution<float> dist(0, 1);
+
+    // handle the special case of not having any values yet, so we don't check for it in the loops.
+    if (values.size() == 0)
+        values.push_back(dist(rng));
+
+    // use whatever samples currently exist, and just add to them, since this is a progressive sequence
+    for (size_t i = values.size(); i < numValues; ++i)
+    {
+        size_t numCandidates = values.size();
+        float bestDistance = FLT_MAX;
+        float bestCandidateValue = 0;
+        for (size_t candidate = 0; candidate < numCandidates; ++candidate)
+        {
+            float candidateValue = dist(rng);
+
+            float maxDistance = 0.0f;
+            for (size_t valueIndex = 0; valueIndex < values.size(); ++valueIndex)
+            {
+                float dist = abs(values[valueIndex] - candidateValue);
+                if (dist > 0.5f)
+                    dist = 1.0f - dist;
+
+                if (VARIATION == false)
+                {
+                    // we want to minimize the distance to the farthest candidate
+                    if (dist > maxDistance)
+                        maxDistance = dist;
+                }
+                else
+                {
+                    // we want to minimize the distance to the closest candidate
+                    if (dist < maxDistance)
+                        maxDistance = dist;
+                }
+            }
+
+            // keep the best candidate seen (minimize the closest distance)
+            if (maxDistance < bestDistance)
+            {
+                bestDistance = maxDistance;
+                bestCandidateValue = candidateValue;
+            }
+        }
+
+        // take the best candidate
+        values.push_back(bestCandidateValue);
+    }
+}
+
+/*
+TODO: how should red noise be generated?
+
+* blue maximizes distance to nearest neighbor
+
+* red noise could minimize distance to nearest neighbor
+* it could also minimize distance to farthest neighbor
+
+you thought you tried them both but you had a bug, you didn't!
+
+*/
 
 // -------------------- MAIN LOGIC --------------------------
 
@@ -401,6 +473,8 @@ int main(int argc, char** argv)
     }
 
     // alternating golden ratio random walk test
+    // Makes an hour glass shape. not useful.
+    if(false)
     {
         float value = 0.0f;
         bool flip = true;
@@ -441,13 +515,50 @@ int main(int argc, char** argv)
         );
     }
 
+    // Red Noise 1 test
+    {
+        std::mt19937 rng = GetRNG();
+        std::vector<float> redNoise;
+        size_t nextIndex = 0;
+        RandomWalkTest("RedNoise1", [&redNoise, &nextIndex, &rng]()
+            {
+                if (nextIndex == 0)
+                    RedNoise_BestCandidate<false>(redNoise, c_randomWalkVisStepsMax, rng);
+                float ret = redNoise[nextIndex];
+                nextIndex++;
+                return ret;
+            }
+        );
+    }
+
+    // Red Noise 2 test
+    {
+        std::mt19937 rng = GetRNG();
+        std::vector<float> redNoise;
+        size_t nextIndex = 0;
+        RandomWalkTest("RedNoise2", [&redNoise, &nextIndex, &rng]()
+            {
+                if (nextIndex == 0)
+                    RedNoise_BestCandidate<true>(redNoise, c_randomWalkVisStepsMax, rng);
+                float ret = redNoise[nextIndex];
+                nextIndex++;
+                return ret;
+            }
+        );
+    }
+
     return 0;
 }
 
 /*
 
+* get the binary search back in for red noise? definitely useful for finding the closest point, but can it find the farthest too? (closest to fract(value + 0.5)?)
+
 ? need to randomize LDS starting positions if doing multiple tests
 * could draw the origin and a grid on the random walk tests to give some sense of location and distance
+* could thread the multi tests for speedup. im betting best candiddate noise will be slow
+
+? DFT the red noise to see?
 
 Random walk single tests...
 1) Show actual random walks - using different colors for different points in the line. rainbow, heatmap, ... ??
@@ -474,5 +585,8 @@ Random walks... brain storming
 High discrepancy sequences...
 1) https://www.researchgate.net/publication/259156917_High-discrepancy_sequences
 2) https://www.researchgate.net/publication/259156640_A_survey_of_high-discrepancy_sequences
+
+Blog:
+* how to make red noise
 
 */
