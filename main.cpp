@@ -267,8 +267,7 @@ static void BlueNoise_BestCandidate(std::vector<float>& values, size_t numValues
     }
 }
 
-template <bool VARIATION>
-static void RedNoise_BestCandidate(std::vector<float>& values, size_t numValues, std::mt19937& rng)
+static void BlueNoise_BestCandidate(std::vector<float>& values, size_t numValues, std::mt19937& rng)
 {
     // if they want less samples than there are, just truncate the sequence
     if (numValues <= values.size())
@@ -283,46 +282,51 @@ static void RedNoise_BestCandidate(std::vector<float>& values, size_t numValues,
     if (values.size() == 0)
         values.push_back(dist(rng));
 
+    // make a sorted list of existing samples
+    std::vector<float> sortedValues;
+    sortedValues = values;
+    sortedValues.reserve(numValues);
+    values.reserve(numValues);
+    std::sort(sortedValues.begin(), sortedValues.end());
+
     // use whatever samples currently exist, and just add to them, since this is a progressive sequence
     for (size_t i = values.size(); i < numValues; ++i)
     {
         size_t numCandidates = values.size();
-        float bestDistance = FLT_MAX;
+        float bestDistance = 0.0f;
         float bestCandidateValue = 0;
+        size_t bestCandidateInsertLocation = 0;
         for (size_t candidate = 0; candidate < numCandidates; ++candidate)
         {
             float candidateValue = dist(rng);
 
-            float maxDistance = 0.0f;
-            for (size_t valueIndex = 0; valueIndex < values.size(); ++valueIndex)
-            {
-                float dist = abs(values[valueIndex] - candidateValue);
-                if (dist > 0.5f)
-                    dist = 1.0f - dist;
+            // binary search the sorted value list to find the values it's closest to.
+            auto lowerBound = std::lower_bound(sortedValues.begin(), sortedValues.end(), candidateValue);
+            size_t insertLocation = lowerBound - sortedValues.begin();
 
-                if (VARIATION == false)
-                {
-                    // we want to minimize the distance to the farthest candidate
-                    if (dist > maxDistance)
-                        maxDistance = dist;
-                }
-                else
-                {
-                    // we want to minimize the distance to the closest candidate
-                    if (dist < maxDistance)
-                        maxDistance = dist;
-                }
-            }
+            // calculate the closest distance (torroidally) from this point to an existing sample by looking left and right.
+            float distanceLeft = (insertLocation > 0)
+                ? candidateValue - sortedValues[insertLocation - 1]
+                : 1.0f + candidateValue - *sortedValues.rbegin();
 
-            // keep the best candidate seen (minimize the closest distance)
-            if (maxDistance < bestDistance)
+            float distanceRight = (insertLocation < sortedValues.size())
+                ? sortedValues[insertLocation] - candidateValue
+                : distanceRight = 1.0f + sortedValues[0] - candidateValue;
+
+            // whichever is closer left vs right is the closer point distance
+            float minDist = std::min(distanceLeft, distanceRight);
+
+            // keep the best candidate seen (maximize the closest distance)
+            if (minDist > bestDistance)
             {
-                bestDistance = maxDistance;
+                bestDistance = minDist;
                 bestCandidateValue = candidateValue;
+                bestCandidateInsertLocation = insertLocation;
             }
         }
 
-        // take the best candidate
+        // take the best candidate and also insert it into the sorted values
+        sortedValues.insert(sortedValues.begin() + bestCandidateInsertLocation, bestCandidateValue);
         values.push_back(bestCandidateValue);
     }
 }
@@ -336,6 +340,8 @@ TODO: how should red noise be generated?
 * it could also minimize distance to farthest neighbor
 
 you thought you tried them both but you had a bug, you didn't!
+
+! you still haven't tried them both successfully. i think the red noise you are seeing is just white noise.
 
 */
 
@@ -557,6 +563,8 @@ int main(int argc, char** argv)
 ? need to randomize LDS starting positions if doing multiple tests
 * could draw the origin and a grid on the random walk tests to give some sense of location and distance
 * could thread the multi tests for speedup. im betting best candiddate noise will be slow
+
+* a good metric too is "how many steps does it take to reach a wall". may go down for a "good" sampling pattern
 
 ? DFT the red noise to see?
 
